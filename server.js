@@ -65,7 +65,7 @@ app.get('/api/season-events', async (req, res) => {
             const detailResponse = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}`, {
                 headers: {
                     'Accept': 'application/json',
-                    'Authorization': `Bearer ${token}` // Remove this line if the 2nd API doesn't need auth
+
                 }
             });
 
