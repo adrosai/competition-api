@@ -40,28 +40,55 @@ app.get('/api/season-events', async (req, res) => {
         const token = await getValidToken();
         const seasonId = '15608'; 
 
-        // Notice the /v3/ added here!
-const response = await fetch(`https://api.competitionsuite.com/v3/events?seasonId=${seasonId}&practice=false`, {
-    headers: {
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${token}`
-    }
-});
+        // STEP 1: Fetch the master list of events
+        const listResponse = await fetch(`https://api.competitionsuite.com/v3/events?seasonId=${seasonId}&practice=false`, {
+            headers: {
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${token}`
+            }
+        });
 
-       if (!response.ok) {
-    const errorDetails = await response.text(); // Read the exact error from CompetitionSuite
-    console.error("API REJECTION DETAILS:", response.status, errorDetails);
-    throw new Error(`Failed to fetch events. Status: ${response.status}`);
-}
-
-        const eventData = await response.json();
+        if (!listResponse.ok) throw new Error("Failed to fetch events list");
         
-        // Send just the "data" array to the frontend
-        res.json(eventData.data); 
+        const listData = await listResponse.json();
+        const eventsList = listData.data; 
+
+        // STEP 2: Loop through the list and fetch details for each event ID
+        // Promise.all runs all these secondary fetches at the exact same time for speed
+        const eventsWithDetails = await Promise.all(eventsList.map(async (event) => {
+            
+            // Extract the ID from the current event
+            const eventId = event.id;
+
+            // Make the call to your second API 
+            // (Replace this URL if you are using a completely different website's API)
+            const detailResponse = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'Authorization': `Bearer ${token}` // Remove this line if the 2nd API doesn't need auth
+                }
+            });
+
+            // If the second API works, extract the JSON. If it fails, return null.
+            let detailData = null;
+            if (detailResponse.ok) {
+                detailData = await detailResponse.json();
+            }
+
+            // STEP 3: Stitch them together! 
+            // The "..." spreads out the original event, and we attach the new data to the end.
+            return {
+                ...event, 
+                extendedDetails: detailData 
+            };
+        }));
+
+        // STEP 4: Send the fully assembled, super-charged array back to your webpage
+        res.json(eventsWithDetails); 
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "Server error fetching competition data" });
+        res.status(500).json({ error: "Server error fetching chained competition data" });
     }
 });
 
