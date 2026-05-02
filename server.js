@@ -34,61 +34,54 @@ async function getValidToken() {
     return cachedToken;
 }
 
-// 2. Your custom endpoint that your webpage will talk to
+// 1. The original route: Just gets the master list of events
 app.get('/api/season-events', async (req, res) => {
     try {
         const token = await getValidToken();
         const seasonId = '15608'; 
 
-        // STEP 1: Fetch the master list of events
-        const listResponse = await fetch(`https://api.competitionsuite.com/v3/events?seasonId=${seasonId}&practice=false`, {
+        const response = await fetch(`https://api.competitionsuite.com/v3/events?seasonId=${seasonId}&practice=false`, {
             headers: {
                 'Accept': 'application/json',
                 'Authorization': `Bearer ${token}`
             }
         });
 
-        if (!listResponse.ok) throw new Error("Failed to fetch events list");
+        if (!response.ok) throw new Error("Failed to fetch events list");
+        const eventData = await response.json();
         
-        const listData = await listResponse.json();
-        const eventsList = listData.data; 
-
-        // STEP 2: Loop through the list and fetch details for each event ID
-        // Promise.all runs all these secondary fetches at the exact same time for speed
-        const eventsWithDetails = await Promise.all(eventsList.map(async (event) => {
-            
-            // Extract the ID from the current event
-            const eventId = event.id;
-
-            // Make the call to your second API 
-            // (Replace this URL if you are using a completely different website's API)
-            const detailResponse = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}`, {
-                headers: {
-                    'Accept': 'application/json',
-
-                }
-            });
-
-            // If the second API works, extract the JSON. If it fails, return null.
-            let detailData = null;
-            if (detailResponse.ok) {
-                detailData = await detailResponse.json();
-            }
-
-            // STEP 3: Stitch them together! 
-            // The "..." spreads out the original event, and we attach the new data to the end.
-            return {
-                ...event, 
-                extendedDetails: detailData 
-            };
-        }));
-
-        // STEP 4: Send the fully assembled, super-charged array back to your webpage
-        res.json(eventsWithDetails); 
+        res.json(eventData.data); 
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "Server error fetching chained competition data" });
+        res.status(500).json({ error: "Server error fetching list" });
+    }
+});
+
+// 2. THE NEW ROUTE: Gets the details for ONE specific event
+// The ":id" in the URL is a variable we can grab
+app.get('/api/event-details/:id', async (req, res) => {
+    try {
+        const token = await getValidToken();
+        const eventId = req.params.id; // Grab the exact ID the webpage asked for
+
+        // Make the call to CompetitionSuite for just this one event
+        const response = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}`, {
+            headers: {
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) throw new Error("Failed to fetch event details");
+        const detailData = await response.json();
+        
+        // Send the specific details back to the webpage
+        res.json(detailData); 
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Server error fetching details" });
     }
 });
 
