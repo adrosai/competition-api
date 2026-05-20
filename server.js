@@ -111,6 +111,33 @@ app.get('/api/event-details/:id', async (req, res) => {
     }
 });
 
+// THE BANDS ROUTE
+app.get('/api/bands', async (req, res) => {
+    try {
+        const token = await getValidToken();
+        const seasonId = '15608'; 
+        
+        // Swap this URL if CompetitionSuite uses a different endpoint for the bands list
+        const response = await fetch(`https://api.competitionsuite.com/v3/groups?seasonId=${seasonId}`, {
+            headers: {
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) throw new Error("Failed to fetch bands list");
+        
+        const bandData = await response.json();
+        
+        // Send the list to the frontend (using .data if it's wrapped, otherwise just send the object)
+        res.json(bandData.data || bandData); 
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Server error fetching bands" });
+    }
+});
+
 // 3. Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
