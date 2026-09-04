@@ -91,7 +91,7 @@ app.get('/api/event-details/:id', async (req, res) => {
         const token = await getValidToken();
         const eventId = req.params.id; // Grab the exact ID the webpage asked for
 
-        // Make the call to CompetitionSuite for just this one event
+        // 1. Fetch the normal event details
         const response = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}`, {
             headers: {
                 'Accept': 'application/json',
@@ -102,7 +102,32 @@ app.get('/api/event-details/:id', async (req, res) => {
         if (!response.ok) throw new Error("Failed to fetch event details");
         const detailData = await response.json();
         
-        // Send the specific details back to the webpage
+        // 2. THE GUESSING GAME: Try to fetch the lineup
+        let guessedLineup = null;
+        
+        // Guess 1: Ask the Event for the lineup
+        let lineupRes = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}/lineup`, {
+            headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` }
+        });
+
+        if (lineupRes.ok) {
+            guessedLineup = await lineupRes.json();
+        } 
+        // If Guess 1 fails, and we have a compId, try Guess 2: Ask the Competition
+        else if (detailData.competitions && detailData.competitions.length > 0) {
+            const compId = detailData.competitions[0].id;
+            
+            lineupRes = await fetch(`https://api.competitionsuite.com/v3/competitions/${compId}/lineup`, {
+                headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (lineupRes.ok) {
+                guessedLineup = await lineupRes.json();
+            }
+        }
+
+        // 3. Attach whatever we found (even if it's null) to the details and send it to the website
+        detailData.lineupData = guessedLineup;
         res.json(detailData); 
 
     } catch (error) {
