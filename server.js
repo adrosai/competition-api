@@ -8,7 +8,62 @@ app.use(cors());
 let cachedToken = null;
 let tokenExpirationTime = null;
 
-// 1. Function to securely get the authorization token
+// ==========================================
+// GOOGLE SHEETS PACKET CONFIGURATION
+// ==========================================
+// Replace this with your published CSV link (File > Share > Publish to web > CSV)
+const SHEET_CSV_URL = process.env.GOOGLE_SHEET_CSV_URL || 'https://docs.google.com/spreadsheets/d/e/YOUR_PUBLISHED_ID/pub?output=csv';
+
+let packetCache = {};
+let lastSheetFetch = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+async function getPacketMap() {
+    if (Date.now() - lastSheetFetch < CACHE_DURATION && Object.keys(packetCache).length > 0) {
+        return packetCache;
+    }
+
+    try {
+        const response = await fetch(SHEET_CSV_URL);
+        if (!response.ok) return packetCache;
+
+        const csvText = await response.text();
+        const lines = csvText.trim().split(/\r?\n/);
+        const newMap = {};
+
+        // Skip row 0 (headers: eventId, eventName, packetUrl)
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+
+            // Split into CSV cells while preserving commas inside quotes
+            const cells = line.match(/(?:^|,)("(?:[^"]|"")*"|[^,]*)/g)?.map(val => 
+                val.replace(/^,/, '').replace(/^"|"$/g, '').trim()
+            ) || [];
+
+            // Column A = cells[0] (eventId)
+            // Column B = cells[1] (eventName - ignored by backend)
+            // Column C = cells[2] (packetUrl)
+            const eventId = cells[0];
+            const packetUrl = cells[2];
+
+            if (eventId && packetUrl) {
+                newMap[eventId] = packetUrl;
+            }
+        }
+
+        packetCache = newMap;
+        lastSheetFetch = Date.now();
+        return packetCache;
+    } catch (err) {
+        console.error("Error fetching Google Sheet CSV:", err);
+        return packetCache;
+    }
+}
+
+// ==========================================
+// AUTHENTICATION HELPER
+// ==========================================
 async function getValidToken() {
     if (cachedToken && Date.now() < tokenExpirationTime) {
         return cachedToken;
@@ -34,22 +89,24 @@ async function getValidToken() {
     return cachedToken;
 }
 
-// 1. The main route: Now fetches the list AND grabs the dates automatically
+// ==========================================
+// ROUTES
+// ==========================================
+
+// 1. Season events list with actual dates attached
 app.get('/api/season-events', async (req, res) => {
     try {
         const token = await getValidToken();
         const seasonId = '15608'; 
 
-        // Get the lightweight list
         const listResponse = await fetch(`https://api.competitionsuite.com/v3/events?seasonId=${seasonId}&practice=false`, {
             headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` }
         });
 
         if (!listResponse.ok) throw new Error("Failed to fetch events list");
         const listData = await listResponse.json();
-        const eventsList = listData.data; 
+        const eventsList = listData.data || []; 
 
-        // Loop through the list and fetch the exact date for each event
         const eventsWithDates = await Promise.all(eventsList.map(async (event) => {
             try {
                 const detailResponse = await fetch(`https://api.competitionsuite.com/v3/events/${event.id}`, {
@@ -58,10 +115,7 @@ app.get('/api/season-events', async (req, res) => {
                 
                 if (detailResponse.ok) {
                     const detailData = await detailResponse.json();
-                    
-                    // Dig into the data just like we did on the frontend to find the date
                     if (detailData.competitions && detailData.competitions.length > 0) {
-                        // Attach the date directly to the event object
                         event.actualDate = detailData.competitions[0].date; 
                     }
                 }
@@ -69,10 +123,9 @@ app.get('/api/season-events', async (req, res) => {
                 console.error(`Failed to fetch date for event ${event.id}`);
             }
             
-            return event; // Return the event (now with an actualDate attached!)
+            return event;
         }));
 
-        // Send the fully upgraded list to your webpage
         res.json(eventsWithDates); 
 
     } catch (error) {
@@ -81,17 +134,12 @@ app.get('/api/season-events', async (req, res) => {
     }
 });
 
-// NOTE: Leave your second route (app.get('/api/event-details/:id')) exactly as it is! 
-// The button still needs it to fetch the schedule links.
-
-// 2. THE NEW ROUTE: Gets the details for ONE specific event
-// The ":id" in the URL is a variable we can grab
+// 2. Event details route (now attaches packetUrl from Google Sheet)
 app.get('/api/event-details/:id', async (req, res) => {
     try {
         const token = await getValidToken();
-        const eventId = req.params.id; // Grab the exact ID the webpage asked for
+        const eventId = req.params.id;
 
-        // 1. Fetch the normal event details
         const response = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}`, {
             headers: {
                 'Accept': 'application/json',
@@ -102,32 +150,10 @@ app.get('/api/event-details/:id', async (req, res) => {
         if (!response.ok) throw new Error("Failed to fetch event details");
         const detailData = await response.json();
         
-        // 2. THE GUESSING GAME: Try to fetch the lineup
-        let guessedLineup = null;
-        
-        // Guess 1: Ask the Event for the lineup
-        let lineupRes = await fetch(`https://api.competitionsuite.com/v3/events/${eventId}/lineup`, {
-            headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` }
-        });
+        // Attach the manual info packet URL from Google Sheet
+        const packetMap = await getPacketMap();
+        detailData.packetUrl = packetMap[eventId] || null;
 
-        if (lineupRes.ok) {
-            guessedLineup = await lineupRes.json();
-        } 
-        // If Guess 1 fails, and we have a compId, try Guess 2: Ask the Competition
-        else if (detailData.competitions && detailData.competitions.length > 0) {
-            const compId = detailData.competitions[0].id;
-            
-            lineupRes = await fetch(`https://api.competitionsuite.com/v3/competitions/${compId}/lineup`, {
-                headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` }
-            });
-            
-            if (lineupRes.ok) {
-                guessedLineup = await lineupRes.json();
-            }
-        }
-
-        // 3. Attach whatever we found (even if it's null) to the details and send it to the website
-        detailData.lineupData = guessedLineup;
         res.json(detailData); 
 
     } catch (error) {
@@ -136,13 +162,12 @@ app.get('/api/event-details/:id', async (req, res) => {
     }
 });
 
-// THE BANDS ROUTE
+// 3. Bands roster route
 app.get('/api/bands', async (req, res) => {
     try {
         const token = await getValidToken();
         const seasonId = '15608'; 
         
-        // Swap this URL if CompetitionSuite uses a different endpoint for the bands list
         const response = await fetch(`https://api.competitionsuite.com/v3/groups?seasonId=${seasonId}`, {
             headers: {
                 'Accept': 'application/json',
@@ -153,8 +178,6 @@ app.get('/api/bands', async (req, res) => {
         if (!response.ok) throw new Error("Failed to fetch bands list");
         
         const bandData = await response.json();
-        
-        // Send the list to the frontend (using .data if it's wrapped, otherwise just send the object)
         res.json(bandData.data || bandData); 
 
     } catch (error) {
@@ -163,7 +186,39 @@ app.get('/api/bands', async (req, res) => {
     }
 });
 
-// 3. Start the server
+// 4. Helper export route: Visits this URL to download a pre-filled CSV for Google Sheets
+app.get('/api/export-events-csv', async (req, res) => {
+    try {
+        const token = await getValidToken();
+        const seasonId = '15608';
+
+        const listResponse = await fetch(`https://api.competitionsuite.com/v3/events?seasonId=${seasonId}&practice=false`, {
+            headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!listResponse.ok) throw new Error("Failed to fetch events");
+        const listData = await listResponse.json();
+        const eventsList = listData.data || [];
+
+        let csv = 'eventId,eventName,packetUrl\n';
+        eventsList.forEach(e => {
+            const safeName = `"${(e.name || '').replace(/"/g, '""')}"`;
+            csv += `${e.id},${safeName},\n`;
+        });
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="events-template.csv"');
+        res.send(csv);
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error generating export");
+    }
+});
+
+// ==========================================
+// START SERVER
+// ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Backend server is running on http://localhost:${PORT}`);
