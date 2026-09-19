@@ -12,7 +12,7 @@ let tokenExpirationTime = null;
 // GOOGLE SHEETS PACKET CONFIGURATION
 // ==========================================
 // Replace this with your published CSV link (File > Share > Publish to web > CSV)
-const SHEET_CSV_URL = process.env.GOOGLE_SHEET_CSV_URL || 'https://docs.google.com/spreadsheets/d/e/YOUR_PUBLISHED_ID/pub?output=csv';
+const SHEET_CSV_URL = process.env.GOOGLE_SHEET_CSV_URL || 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTT7wkPZ0xUnxV4XzK36dXxSxWFzgdiqT1Z2rM4U1CGN-L02nXMZcmvmfBcP2Ou6VEDBgiVrFYilXPC/pub?output=csv';
 
 let packetCache = {};
 let lastSheetFetch = 0;
