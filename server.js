@@ -46,9 +46,13 @@ async function getPacketMap() {
             // Column C = cells[2] (packetUrl)
             const eventId = cells[0];
             const packetUrl = cells[2];
+            const programUrl = cells[3];
 
-            if (eventId && packetUrl) {
-                newMap[eventId] = packetUrl;
+           if (eventId) {
+                newMap[eventId] = {
+                    packetUrl: packetUrl || null,
+                    programUrl: programUrl || null
+                };
             }
         }
 
@@ -150,11 +154,15 @@ app.get('/api/event-details/:id', async (req, res) => {
         if (!response.ok) throw new Error("Failed to fetch event details");
         const detailData = await response.json();
         
-        // Attach the manual info packet URL from Google Sheet
-        const packetMap = await getPacketMap();
-        detailData.packetUrl = packetMap[eventId] || null;
+        // --- UPDATED: Attach both URLs from the Google Sheet ---
+        const sheetData = await getPacketMap();
+        const mappedUrls = sheetData[eventId] || {};
+        
+        detailData.packetUrl = mappedUrls.packetUrl || null;
+        detailData.programUrl = mappedUrls.programUrl || null;
+        // -------------------------------------------------------
 
-        res.json(detailData); 
+        res.json(detailData);
 
     } catch (error) {
         console.error(error);
@@ -200,7 +208,7 @@ app.get('/api/export-events-csv', async (req, res) => {
         const listData = await listResponse.json();
         const eventsList = listData.data || [];
 
-        let csv = 'eventId,eventName,packetUrl\n';
+        let csv = 'eventId,eventName,packetUrl,programUrl\n';
         eventsList.forEach(e => {
             const safeName = `"${(e.name || '').replace(/"/g, '""')}"`;
             csv += `${e.id},${safeName},\n`;
